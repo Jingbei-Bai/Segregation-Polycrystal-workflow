@@ -1,0 +1,27 @@
+# Minimal / core dependencies (for primary functionality)
+numpy>=1.21
+scikit-learn>=1.0
+joblib>=1.2
+matplotlib>=3.4
+
+# Optional (enable SOAP feature computation)
+ase>=3.22
+dscribe>=1.1.0
+
+# Optional (statistical fitting)
+scipy>=1.7
+
+# Optional (OVITO-based GB detection)
+# OVITO may not be available via pip on all platforms; prefer the OVITO installer or conda package
+# If you have a pip-installable OVITO build, you may try:
+# ovito>=3.0
+
+# Optional (GUI image support)
+Pillow>=9.0
+
+# Notes:
+# - The project was developed with Python 3.8+ (3.10 tested during development). Use a virtual
+#   environment (venv/conda) to isolate these dependencies.
+# - Some optional functionality (OVITO, ASE, dscribe) relies on large scientific packages that
+#   may be easier to install via conda on certain platforms.
+
