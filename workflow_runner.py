@@ -98,7 +98,7 @@ class WorkflowApp:
         self.ent_random.insert(0, '20')
         self.ent_random.grid(row=2, column=1)
 
-        tk.Label(left, text='polycrystal output (polycrystal.txt)').grid(row=3, column=0, sticky='w')
+        tk.Label(left, text='input (polycrystal.txt)').grid(row=3, column=0, sticky='w')
         self.ent_poly_out = tk.Entry(left, width=30)
         self.ent_poly_out.insert(0, 'polycrystal.txt')
         self.ent_poly_out.grid(row=3, column=1)
@@ -115,9 +115,9 @@ class WorkflowApp:
 
         # LAMMPS in
         tk.Label(left, text='2) Generate LAMMPS in').grid(row=7, column=0, sticky='w', pady=(10,0))
-        tk.Label(left, text='read_data (lmp file and extra params)').grid(row=8, column=0, sticky='w')
+        tk.Label(left, text='read_data (lmp file name)').grid(row=8, column=0, sticky='w')
         self.ent_read_data = tk.Entry(left, width=40)
-        self.ent_read_data.insert(0, 'polycrystal.lmp extra/atom/types 1')
+        self.ent_read_data.insert(0, 'polycrystal.lmp')
         self.ent_read_data.grid(row=8, column=1)
 
         tk.Label(left, text='EAM file').grid(row=9, column=0, sticky='w')
@@ -290,12 +290,12 @@ class WorkflowApp:
         # Note: external command preview removed from GUI. Commands are shown in log instead.
         self.log('Prepared atomsk command: ' + ' '.join(cmd))
 
-        # Auto-fill read_data field with the lmp filename
-        try:
-            self.ent_read_data.delete(0, tk.END)
-            self.ent_read_data.insert(0, f'{poly_path.name} extra/atom/types 1')
-        except Exception:
-            pass
+        # Auto-fill read_data field with the lmp filename - DISABLED
+        # try:
+        #     self.ent_read_data.delete(0, tk.END)
+        #     self.ent_read_data.insert(0, f'{poly_path.name} extra/atom/types 1')
+        # except Exception:
+        #     pass
 
         # Prompt for XSF if needed and run atomsk in background (no extra confirmation)
         if xsf_path is None:
