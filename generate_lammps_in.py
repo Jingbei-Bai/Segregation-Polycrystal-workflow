@@ -16,7 +16,7 @@ suggested run commands in the GUI.
 """
 
 from pathlib import Path
-from typing import Sequence, Union
+from typing import Sequence, Union, Tuple
 import subprocess
 import threading
 
@@ -33,19 +33,18 @@ except Exception:
     sort_dump_file = None
 
 
-DEFAULT_TEMPLATE = '''units           metal
+DEFAULT_TEMPLATE_IN_TUI = '''units           metal
 atom_style      atomic
 boundary        p p p
-read_data       {read_data}
+read_data       {read_data_initial}
 mass 1 {mass1}
-mass 2 {mass2}
 pair_style  eam/alloy
-pair_coeff * * {eam_file} {species_line}
+pair_coeff * * {eam_file} {species_first_only}
 timestep {timestep}
 thermo {thermo}
 thermo_style        {thermo_style}
 variable T_anneal equal 373.2
-variable T_cool_start equal 373.2
+variable T_cool_start equal ${{T_anneal}}
 variable T_cool_end equal 0.1
 variable CoolingRate equal 3
 fix 1 all npt temp ${{T_anneal}} ${{T_anneal}} 0.1 iso 0 0 1.0
@@ -62,13 +61,42 @@ min_style cg
 min_modify dmax 0.1
 minimize 0 1.0e-12 10000 100000
 write_dump all atom dump.atom
+write_data {data_intermediate}
+#mpiexec -np 4 lmp -in in_tui -pk omp 4 -sf omp
+'''
+
+DEFAULT_TEMPLATE_IN = '''units           metal
+atom_style      atomic
+boundary        p p p
+read_data       {data_intermediate} extra/atom/types 1
+
+mass 1 {mass1}
+mass 2 {mass2}
+pair_style  eam/alloy
+pair_coeff * * {eam_file} {species_line}
+
+timestep {timestep}
+thermo {thermo}
+thermo_style        custom step pe
+
+# Initial minimization -> baseline
+minimize 0 1e-12 10000 10000
+
+# Write baseline restart for later reuse
 write_restart baseline.restart
 write_data baseline.data
+
 run 0
+
+
+# Save total atoms and build loop (in most LAMMPS versions these variables/loop controls persist after clear)
 variable total_atoms equal count(all)
 variable atom_id loop ${{total_atoms}}
+
+# ------------------ Loop body: restore baseline -> replace -> relax -> record ------------------
 label loop_start
 
+# Clear current system so read_restart can define the box
 clear
 
 units           metal
@@ -78,14 +106,14 @@ boundary        p p p
 
 read_restart baseline.restart
 
-mass 1 26.98
-mass 2 63.55
+mass 1 {mass1}
+mass 2 {mass2}
 pair_style  eam/alloy
-pair_coeff * * AlCu.eam.alloy Al Cu
+pair_coeff * * {eam_file} {species_line}
 
-timestep 0.001
-thermo 1000
-thermo_style custom step pe
+timestep {timestep}
+thermo {thermo}
+thermo_style        custom step pe
 variable totalenergy equal pe
 
 set atom ${{atom_id}} type 2
@@ -99,106 +127,159 @@ next atom_id
 jump SELF loop_start
 run 0
 print "Done!"
-#mpiexec -np 4 lmp -in in.lmp -pk omp 4 -sf omp
-
+#mpiexec -np 4 lmp -in in -pk omp 4 -sf omp
 '''
 
 
-def generate_lammps_in(read_data: str, append_txt: str, eam_file: str, out: Union[str, Path] = 'in.lmp', species: Union[Sequence[str], str] = ('Al', 'Cu'), mass1: Union[str,float] = '26.98', mass2: Union[str,float] = '63.55', timestep: float = 0.001, thermo: int = 1000, thermo_style: str = 'custom step pe', read_data_extra: str = '') -> Path:
-    """生成 LAMMPS in 文件并返回输出路径。
+def generate_lammps_in(read_data: str, append_txt: str, eam_file: str, out_tui: Union[str, Path] = 'in_tui', out_in: Union[str, Path] = 'in', species: Union[Sequence[str], str] = ('Al', 'Cu'), mass1: Union[str,float] = '26.98', mass2: Union[str,float] = '63.55', timestep: float = 0.001, thermo: int = 1000, thermo_style: str = 'custom step pe', read_data_extra: str = '') -> Tuple[Path, Path]:
+    """Generate LAMMPS input files (in_tui and in) and return their paths.
 
-    参数:
-      read_data: read_data 后面的参数（可以包含路径和额外参数），例如 'medium_final_atoms.lmp extra/atom/types 1'
-      append_txt: print append 后的文件名，例如 'medium_Al_Cu_eam4.txt'
-      eam_file: pair_coeff 行中的 eam 文件名，例如 'AlCu.eam'
-      out: 输出 in 文件路径（默认 'in.lmp')
-      species: 物种名序列或用空格分隔的字符串（默认 ('Al','Cu')）
-      mass1/mass2: 元素质量（默认示例中的值）
-      timestep, thermo, thermo_style: LAMMPS 参数
-      read_data_extra: 可选的额外 read_data 参数（如果不包含在 read_data 参数中）
+    Parameters:
+      read_data: arguments after read_data (can include path (e.g. polycrystal.lmp) and extra args), e.g. 'medium_final_atoms.lmp extra/atom/types 1'
+                 NOTE: For in_tui, we use the first part (filename) and strip extra args if they look like 'extra/atom/types'.
+                 But based on usage, in_tui typically just reads the geometry file.
+      append_txt: filename after print append, e.g. 'medium_Al_Cu_eam4.txt'
+      eam_file: EAM file in the pair_coeff line, e.g. 'AlCu.eam'
+      out_tui: output path for the annealing script (default 'in_tui')
+      out_in: output path for the segregation script (default 'in')
+      species: species list or space-separated string (default ('Al','Cu'))
+      mass1/mass2: element masses
+      timestep, thermo, thermo_style: LAMMPS parameters
+      read_data_extra: optional extra read_data args
 
-    返回: 写入的 Path 对象
+    Returns: (path_to_in_tui, path_to_in)
     """
-    # 构建 species 行
+    # Build the species line.
     if isinstance(species, (list, tuple)):
-        species_line = ' '.join(map(str, species))
+        species_list = list(map(str, species))
+        species_line = ' '.join(species_list)
+        # For in_tui, usually only the major species is relevant if we are just annealing a pure structure or if the pot file needs it?
+        # In the provided example "in_tui": pair_coeff * * AlCu.eam Al
+        # It seems it treats everything as type 1 (Al) initially?
+        # Let's assume the first species is the primary one for in_tui if multiple are provided,
+        # OR if the user provides the list, maybe we should check if they want 1 or all.
+        # However, in_tui provided has "pair_coeff * * AlCu.eam Al".
+        # Let's use the first species for in_tui.
+        species_first_only = species_list[0] if species_list else 'Al'
     else:
         species_line = str(species)
+        species_first_only = species_line.split()[0] if species_line.strip() else 'Al'
 
-    # 合并 read_data 字段（如果 read_data_extra 提供，则合并）
-    read_data_full = (read_data + ' ' + read_data_extra).strip()
+    # Parse read_data to get the filename.
+    # The user might pass "file.lmp extra/atom/types 1" or just "file.lmp"
+    parts = read_data.strip().split()
+    input_file_path = parts[0]
 
-    content = DEFAULT_TEMPLATE.format(
-        read_data=read_data_full,
+    # Construct intermediate data filename (e.g. file.data)
+    # If input is 'polycrystal.lmp', intermediate might be 'polycrystal.data'
+    # The provided example: read '70+5.lmp', write '70+5.data'
+    p = Path(input_file_path)
+    data_intermediate = p.with_suffix('.data').name
+
+    # Generte in_tui content
+    # in_tui reads the initial file (often without extra/atom/types if it's just a dump turned data, or maybe it needs it?)
+    # The provided in_tui has: read_data 70+5.lmp
+    # It does NOT have extra/atom/types 1.
+    # We will assume for in_tui we just use the filename.
+
+    content_tui = DEFAULT_TEMPLATE_IN_TUI.format(
+        read_data_initial=input_file_path,
+        mass1=str(mass1),
+        mass2=str(mass2),
+        eam_file=str(eam_file),
+        species_first_only=species_first_only,
+        timestep=timestep,
+        thermo=thermo,
+        thermo_style=thermo_style,
+        data_intermediate=data_intermediate
+    )
+
+    # Generate in content
+    # in reads the intermediate data file.
+    # NOTE: The provided in file has 'read_data 70+5.data extra/atom/types 1'
+    # So we should append 'extra/atom/types 1' to the intermediate data filename in the read_data line.
+    # But wait, read_data_extra parameter might duplicate this if we are not careful.
+    # Let's treat read_data_extra as something applied to the INITIAL user input, but here we are generating a secondary step.
+    # The user instruction implies the flow: in_tui -> in.
+    # So 'in' should read what 'in_tui' writes (data_intermediate).
+    # And we add 'extra/atom/types 1' because we are doing segregation (inserting type 2).
+
+    content_in = DEFAULT_TEMPLATE_IN.format(
+        data_intermediate=data_intermediate,
         mass1=str(mass1),
         mass2=str(mass2),
         eam_file=str(eam_file),
         species_line=species_line,
         timestep=timestep,
         thermo=thermo,
-        thermo_style=thermo_style,
         append_txt=str(append_txt),
     )
 
-    out_path = Path(out)
-    out_path.write_text(content, encoding='utf-8')
-    return out_path
+    path_tui = Path(out_tui)
+    path_in = Path(out_in)
+
+    path_tui.write_text(content_tui, encoding='utf-8')
+    path_in.write_text(content_in, encoding='utf-8')
+
+    return path_tui, path_in
 
 
 def main_gui():
-    """简单的 Tkinter GUI，供交互式生成 in 文件。"""
+    """Simple Tkinter GUI for generating an in file interactively."""
     if tk is None:
-        print('当前 Python 环境中不可用 tkinter，无法启动 GUI。')
-        print('请直接从 Python 导入并调用 generate_lammps_in(...)')
+        print('tkinter is not available in the current Python environment; cannot start GUI.')
+        print('Please import and call generate_lammps_in(...) from Python instead.')
         return
 
     root = tk.Tk()
-    root.title('LAMMPS in 生成器')
+    root.title('LAMMPS in Generator')
 
     frm = tk.Frame(root, padx=10, pady=10)
     frm.pack(fill=tk.BOTH, expand=True)
 
-    tk.Label(frm, text='read_data (例如: polycrystal.lmp extra/atom/types 1):').grid(row=0, column=0, sticky='w')
+    tk.Label(frm, text='read_data (e.g. polycrystal.lmp extra/atom/types 1):').grid(row=0, column=0, sticky='w')
     ent_read = tk.Entry(frm, width=50)
-    ent_read.insert(0, 'polycrystal.lmp extra/atom/types 1')
+    ent_read.insert(0, 'polycrystal.lmp') # Default changed to just filename, cleaner
     ent_read.grid(row=0, column=1, sticky='w')
 
-    tk.Label(frm, text='append 文件名 (例如: Al_Cu.txt):').grid(row=1, column=0, sticky='w')
+    tk.Label(frm, text='append filename (e.g. Al_Cu.txt):').grid(row=1, column=0, sticky='w')
     ent_append = tk.Entry(frm, width=50)
     ent_append.insert(0, 'Al_Cu.txt')
     ent_append.grid(row=1, column=1, sticky='w')
 
-    tk.Label(frm, text='EAM 文件 (例如: AlCu.eam):').grid(row=2, column=0, sticky='w')
+    tk.Label(frm, text='EAM file (e.g. AlCu.eam):').grid(row=2, column=0, sticky='w')
     ent_eam = tk.Entry(frm, width=50)
     ent_eam.insert(0, 'AlCu.eam')
     ent_eam.grid(row=2, column=1, sticky='w')
 
-    tk.Label(frm, text='物种（空格分隔，默认: Al Cu）:').grid(row=3, column=0, sticky='w')
+    tk.Label(frm, text='Species (space-separated, default: Al Cu):').grid(row=3, column=0, sticky='w')
     ent_species = tk.Entry(frm, width=50)
     ent_species.insert(0, 'Al Cu')
     ent_species.grid(row=3, column=1, sticky='w')
 
-    tk.Label(frm, text='输出 in 文件 (例如: in.lmp):').grid(row=4, column=0, sticky='w')
+    tk.Label(frm, text='Output filename for segregation script (default: in):').grid(row=4, column=0, sticky='w')
     ent_out = tk.Entry(frm, width=50)
-    ent_out.insert(0, 'in.lmp')
+    ent_out.insert(0, 'in')
     ent_out.grid(row=4, column=1, sticky='w')
 
-    tk.Label(frm, text='可选: read_data 额外参数 (可留空):').grid(row=5, column=0, sticky='w')
-    ent_read_extra = tk.Entry(frm, width=50)
-    ent_read_extra.grid(row=5, column=1, sticky='w')
+    tk.Label(frm, text='(Will also generate a corresponding *_tui setup script)').grid(row=5, column=0, sticky='w') # informational
 
-    # 新增选项：是否生成后自动运行 LAMMPS，以及是否让 in 名称与 append 文件名自动一致
+    tk.Label(frm, text='Optional: extra read_data args (leave blank if none):').grid(row=6, column=0, sticky='w')
+    ent_read_extra = tk.Entry(frm, width=50)
+    ent_read_extra.grid(row=6, column=1, sticky='w')
+
+    # New options: auto-run LAMMPS and optionally sync in name with append output name.
     run_lammps_var = tk.BooleanVar(value=False)
     sync_names_var = tk.BooleanVar(value=False)
-    chk_run_lammps = tk.Checkbutton(frm, text='生成后自动运行 LAMMPS (mpiexec -np 4 lmp -in <in> -pk omp 4 -sf omp)', variable=run_lammps_var)
-    chk_run_lammps.grid(row=5, column=2, sticky='w', padx=(10,0))
-    chk_sync = tk.Checkbutton(frm, text='使 -in 后的文件名与 append 输出名自动一致 (append = in 的 basename + .txt)', variable=sync_names_var)
-    chk_sync.grid(row=6, column=2, sticky='w', padx=(10,0))
+    chk_run_lammps = tk.Checkbutton(frm, text='Auto-run LAMMPS (in_tui then in)', variable=run_lammps_var)
+    chk_run_lammps.grid(row=6, column=2, sticky='w', padx=(10,0))
+    chk_sync = tk.Checkbutton(frm, text='Sync -in filename with append output name (append = in basename + .txt)', variable=sync_names_var)
+    chk_sync.grid(row=7, column=2, sticky='w', padx=(10,0))
 
-    # 预览/日志
-    tk.Label(frm, text='生成内容预览：').grid(row=6, column=0, sticky='nw', pady=(10,0))
+    # Preview/log
+    tk.Label(frm, text='Generated content preview:').grid(row=7, column=0, sticky='nw', pady=(10,0))
     txt_preview = scrolledtext.ScrolledText(frm, width=80, height=20)
-    txt_preview.grid(row=6, column=1, columnspan=2, pady=(10,0))
+    txt_preview.grid(row=7, column=1, columnspan=2, pady=(10,0))
 
     def log(msg: str):
         txt_preview.insert(tk.END, msg + '\n')
@@ -216,9 +297,9 @@ def main_gui():
             ent_eam.delete(0, tk.END)
             ent_eam.insert(0, p)
 
-    btn_browse_read = tk.Button(frm, text='浏览 read_data', command=browse_read)
+    btn_browse_read = tk.Button(frm, text='Browse read_data', command=browse_read)
     btn_browse_read.grid(row=0, column=2, padx=5)
-    btn_browse_eam = tk.Button(frm, text='浏览 eam', command=browse_eam)
+    btn_browse_eam = tk.Button(frm, text='Browse EAM', command=browse_eam)
     btn_browse_eam.grid(row=2, column=2, padx=5)
 
     def on_generate():
@@ -231,81 +312,117 @@ def main_gui():
         rd_extra = ent_read_extra.get().strip()
 
         if not rd:
-            messagebox.showerror('参数错误', 'read_data 不能为空')
+            messagebox.showerror('Parameter error', 'read_data cannot be empty')
             return
         if not ap and not sync_names_var.get():
-            messagebox.showerror('参数错误', 'append 文件名不能为空（或启用自动一致选项）')
+            messagebox.showerror('Parameter error', 'append filename cannot be empty (or enable sync option)')
             return
         if not eam:
-            messagebox.showerror('参数错误', 'eam 文件不能为空')
+            messagebox.showerror('Parameter error', 'EAM file cannot be empty')
             return
 
         species_list = sp.split()
 
-        # 如果勾选了同步名字，则把 append 文件名设置为 in 的 basename + .txt
+        # If sync is checked, set append to in basename + .txt
         append_to_use = ap
         if sync_names_var.get():
             try:
                 append_to_use = str(Path(out).stem) + '.txt'
-                # 更新界面显示
+                # Update UI
                 ent_append.delete(0, tk.END)
                 ent_append.insert(0, append_to_use)
             except Exception:
                 append_to_use = ap
 
+        # Determine strict filenames based on user request "in" and "in_tui"
+        # If user put "in.lmp", we might produce "in_tui.lmp" and "in.lmp"?
+        # Or just "in_tui" and "in"?
+        # The prompt says: "先运行in_tui，然后运行in" (Run in_tui first, then in).
+        # Let's infer the tui name from the out name.
+        p_out = Path(out)
+        if p_out.name == 'in':
+             out_curr_tui = p_out.parent / 'in_tui'
+        else:
+             # if out is "custom.in", maybe "custom_tui.in"?
+             out_curr_tui = p_out.parent / (p_out.stem + '_tui' + p_out.suffix)
+
         try:
-            # 先生成 in 文件（如果同步名，generate_lammps_in 会使用 append_to_use）
-            outp = generate_lammps_in(rd, append_to_use, eam, out=out, species=species_list, read_data_extra=rd_extra)
+            # Generate both files
+            path_tui, path_in = generate_lammps_in(rd, append_to_use, eam, out_tui=str(out_curr_tui), out_in=out, species=species_list, read_data_extra=rd_extra)
         except Exception as e:
-            messagebox.showerror('写入失败', f'生成 in 文件时出错：{e}')
+            messagebox.showerror('Write failed', f'Error generating files: {e}')
             return
 
-        txt_preview.insert(tk.END, outp.read_text(encoding='utf-8'))
+        txt_preview.insert(tk.END, f'--- {path_tui.name} ---\n')
+        txt_preview.insert(tk.END, path_tui.read_text(encoding='utf-8'))
+        txt_preview.insert(tk.END, f'\n\n--- {path_in.name} ---\n')
+        txt_preview.insert(tk.END, path_in.read_text(encoding='utf-8'))
 
-        # 如果勾选运行 LAMMPS
+        # Auto-run LAMMPS if enabled
         if run_lammps_var.get():
-            dir_for_ops = Path(outp).parent.resolve()
-            in_basename = Path(outp).name
-            cmd = ['mpiexec', '-np', '4', 'lmp', '-in', in_basename, '-pk', 'omp', '4', '-sf', 'omp']
+            dir_for_ops = path_in.parent.resolve()
+
+            # Sequence: tui then in
+            # We need to run tui first.
+            cmd_tui = ['mpiexec', '-np', '4', 'lmp', '-in', path_tui.name, '-pk', 'omp', '4', '-sf', 'omp']
+            cmd_in = ['mpiexec', '-np', '4', 'lmp', '-in', path_in.name, '-pk', 'omp', '4', '-sf', 'omp']
+
             # run in background thread to avoid blocking GUI
             def _run_lammps():
                 def safe_log(s: str):
                     # use after with function+args to avoid lambda-related linter warnings
                     root.after(0, log, s)
 
-                safe_log('\nRunning LAMMPS with: ' + ' '.join(cmd))
+                # --- STEP 1: in_tui ---
+                safe_log('\nRunning STEP 1 (Annealing/Setup): ' + ' '.join(cmd_tui))
                 try:
-                    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(dir_for_ops))
+                    proc_tui = subprocess.run(cmd_tui, capture_output=True, text=True, cwd=str(dir_for_ops))
                 except FileNotFoundError:
-                    root.after(0, messagebox.showerror, '执行失败', '未找到 mpiexec 或 lmp 可执行文件。请确保 mpiexec 和 lmp 在 PATH 中。')
+                    root.after(0, messagebox.showerror, 'Execution failed', 'mpiexec or lmp not found.')
                     safe_log('Error: mpiexec or lmp not found in PATH')
                     return
                 except Exception as e:
-                    root.after(0, messagebox.showerror, '执行失败', f'运行 LAMMPS 时出错：{e}')
-                    safe_log(f'运行 LAMMPS 异常：{e}')
+                    root.after(0, messagebox.showerror, 'Execution failed', f'Error running LAMMPS Step 1: {e}')
+                    safe_log(f'LAMMPS Step 1 runtime error: {e}')
+                    return
+
+                if proc_tui.returncode != 0:
+                    safe_log(f'LAMMPS Step 1 failed with code {proc_tui.returncode}. Aborting Step 2.')
+                    safe_log('Last stderr chars: ' + proc_tui.stderr[-500:])
+                    root.after(0, messagebox.showerror, 'LAMMPS Step 1 failed', f'Step 1 (in_tui) returned non-zero exit code: {proc_tui.returncode}')
+                    return
+
+                safe_log('Step 1 finished successfully.')
+
+                # --- STEP 2: in ---
+                safe_log('\nRunning STEP 2 (Segregation Calculation): ' + ' '.join(cmd_in))
+                try:
+                    proc_in = subprocess.run(cmd_in, capture_output=True, text=True, cwd=str(dir_for_ops))
+                except Exception as e:
+                    root.after(0, messagebox.showerror, 'Execution failed', f'Error running LAMMPS Step 2: {e}')
+                    safe_log(f'LAMMPS Step 2 runtime error: {e}')
                     return
 
                 # Do not stream full LAMMPS stdout/stderr into the GUI preview to avoid
                 # flooding the visualization pane. Only report high-level status.
-                safe_log('LAMMPS finished (see log.lammps in the working directory for full output if needed)')
+                safe_log('LAMMPS Step 2 finished (see log.lammps in the working directory for full output if needed)')
 
-                if proc.returncode != 0:
-                    root.after(0, messagebox.showerror, 'LAMMPS 失败', f'LAMMPS 返回非零退出码：{proc.returncode}\n请查看日志以获取详细信息。')
+                if proc_in.returncode != 0:
+                    root.after(0, messagebox.showerror, 'LAMMPS Step 2 failed', f'Step 2 (in) returned non-zero exit code: {proc_in.returncode}\nPlease check logs for details.')
                     return
 
-                # 尝试删除 LAMMPS 默认生成的日志文件 log.lammps
-                safe_log('LAMMPS 运行成功，正在尝试删除 log.lammps（如果存在）...')
+                # Attempt to delete LAMMPS default log file log.lammps
+                safe_log('LAMMPS ended; attempting to delete log.lammps (if present)...')
                 try:
                     log_path = dir_for_ops / 'log.lammps'
                     if log_path.exists():
-                        safe_log(f'发现日志文件：{log_path.name}，尝试删除...')
                         log_path.unlink()
-                        safe_log(f'已删除日志文件：{log_path.name}')
+                        safe_log(f'Deleted log file: {log_path.name}')
                     else:
-                        safe_log('未发现 log.lammps，无需删除')
+                        safe_log('log.lammps not found; nothing to delete')
                 except Exception as e:
-                    safe_log(f'删除 log.lammps 失败：{e}')
-                    root.after(0, messagebox.showwarning, '清理日志失败', f'运行完成但无法删除 log.lammps：{e}')
+                    safe_log(f'Failed to delete log.lammps: {e}')
+                    root.after(0, messagebox.showwarning, 'Log cleanup failed', f'Run completed but could not delete log.lammps: {e}')
 
                 # After successful run, attempt to sort dump.atom (if present).
                 try:
@@ -313,21 +430,21 @@ def main_gui():
                     if dump_path.exists() and sort_dump_file is not None:
                         # call sorter without a GUI logger to avoid streaming logs into preview
                         sort_dump_file(dump_path, header_lines=9, logger=None)
-                        root.after(0, messagebox.showinfo, 'LAMMPS 完成', 'LAMMPS 运行完成；若存在 dump.atom，已自动排序。')
+                        root.after(0, messagebox.showinfo, 'LAMMPS complete', 'LAMMPS workflow finished; dump.atom (if present) was auto-sorted.')
                     else:
-                        root.after(0, messagebox.showinfo, 'LAMMPS 完成', 'LAMMPS 运行完成。')
+                        root.after(0, messagebox.showinfo, 'LAMMPS complete', 'LAMMPS workflow finished.')
                 except Exception as e:
-                    root.after(0, messagebox.showwarning, '排序失败', f'dump.atom 自动排序失败：{e}')
+                    root.after(0, messagebox.showwarning, 'Sort failed', f'Auto-sort of dump.atom failed: {e}')
 
             threading.Thread(target=_run_lammps, daemon=True).start()
 
-        messagebox.showinfo('已生成', f'已生成: {outp}\n请在含有 LAMMPS 的终端中使用该 in 文件运行 LAMMPS（如果未自动运行的话）')
+        messagebox.showinfo('Generated', f'Generated files:\n{path_tui}\n{path_in}\n\nRun in_tui first, then in.')
 
-    btn_generate = tk.Button(frm, text='生成 in 文件', command=on_generate, bg='#2196f3', fg='white')
-    btn_generate.grid(row=7, column=1, pady=10, sticky='w')
+    btn_generate = tk.Button(frm, text='Generate files', command=on_generate, bg='#2196f3', fg='white')
+    btn_generate.grid(row=8, column=1, pady=10, sticky='w')
 
-    btn_quit = tk.Button(frm, text='退出', command=root.destroy)
-    btn_quit.grid(row=7, column=2, pady=10, sticky='e')
+    btn_quit = tk.Button(frm, text='Exit', command=root.destroy)
+    btn_quit.grid(row=8, column=2, pady=10, sticky='e')
 
     root.mainloop()
 

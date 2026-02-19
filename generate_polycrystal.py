@@ -13,97 +13,97 @@ import re
 
 
 def _normalize_box_input(box: Union[Sequence, int, float, str]):
-    """接受单个标量（int/float/str）或序列（长度1或3），返回三个字符串表示的 box 大小。"""
-    # 如果是单个标量（非序列或是字符串/数字），统一处理为三份相同的值
+    """Accepts a single scalar (int/float/str) or sequence (length 1 or 3), returns three strings representing box size."""
+    # If scalar (not sequence or is string/number), treat as three identical values
     if isinstance(box, (int, float)):
         s = str(box)
         return [s, s, s]
     if isinstance(box, str):
-        # 允许传入像 "70" 或 "70 80 90" 的字符串
+        # Allow strings like "70" or "70 80 90"
         parts = box.split()
         if len(parts) == 1:
             return [parts[0], parts[0], parts[0]]
         if len(parts) == 3:
             return parts
-        raise ValueError('字符串形式的 box 必须是一个值或三个用空格分隔的值，例如 "70" 或 "70 80 90"')
-    # 如果是序列（list/tuple）
+        raise ValueError('String format for box must be one value or three space-separated values, e.g. "70" or "70 80 90"')
+    # If sequence (list/tuple)
     try:
         seq = list(box)
     except TypeError:
-        raise ValueError('box 必须是数字/字符串或序列')
+        raise ValueError('box must be a number/string or sequence')
 
     if len(seq) == 1:
         val = seq[0]
         return [str(val), str(val), str(val)]
     if len(seq) == 3:
         return [str(seq[0]), str(seq[1]), str(seq[2])]
-    raise ValueError('参数 box 必须是 1 个值或 3 个值，例如: 70 或 [70,70,70]')
+    raise ValueError('box parameter must be 1 value or 3 values, e.g.: 70 or [70,70,70]')
 
 
 def write_polycrystal(path: Path, box_vals, random_val: int):
-    # 写入 polycrystal.txt（覆盖）
+    # Write polycrystal.txt (overwrite)
     lines = []
     lines.append('box {} {} {}'.format(box_vals[0], box_vals[1], box_vals[2]))
     lines.append('random {}'.format(random_val))
     content = "\n".join(lines) + "\n"
-    # 确保父目录存在
+    # Ensure parent directory exists
     parent = path.parent
     if not parent.exists():
         try:
             parent.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            raise OSError(f'无法创建父目录 {parent}: {e}')
+            raise OSError(f'Cannot create parent directory {parent}: {e}')
 
-    # 如果目标路径已经存在且是一个目录，给出明确提示（Windows 上尝试以文件打开目录会导致 Errno 22）
+    # If target path exists and is a directory, give explicit error (Windows Errno 22)
     if path.exists() and path.is_dir():
-        raise IsADirectoryError(f'目标路径是一个文件夹，无法写入文件: {path}。请换一个文件名或删除同名文件夹。')
+        raise IsADirectoryError(f'Target path is a directory, cannot write file: {path}. Please choose another name or delete the folder.')
 
     try:
         path.write_text(content, encoding='utf-8')
     except OSError as e:
-        # 捕获并包装错误，提供上下文信息
-        raise OSError(f'写入文件 {path} 失败: {e}')
+        # Wrap error with context
+        raise OSError(f'Failed to write file {path}: {e}')
 
 
 def _sanitize_filename(name: str) -> str:
-    """对文件名做简单清洗，移除 Windows/UNIX 上常见的非法字符并避免保留名。
+    """Simple filename sanitization, removing illegal characters on Windows/UNIX and avoiding reserved names.
 
-    返回一个安全的文件名（不包含路径）。"""
+    Returns a safe filename (no path)."""
     if not isinstance(name, str) or name == '':
         return 'polycrystal.txt'
 
-    # 只保留 basename
+    # Keep only basename
     base = Path(name).name
-    # 移除控制字符
+    # Remove control characters
     base = re.sub(r'[\x00-\x1f\x7f]', '', base)
-    # 移除这些非法字符：<>:"/\\|?*
+    # Remove illegal characters: <>:"/\\|?*
     base = re.sub(r'[<>:"/\\|?*]', '_', base)
-    # 处理 Windows 保留名（CON, PRN, AUX, NUL, COM1..COM9, LPT1..LPT9）
+    # Handle Windows reserved names (CON, PRN, AUX, NUL, COM1..COM9, LPT1..LPT9)
     reserved = { 'CON','PRN','AUX','NUL' } | {f'COM{i}' for i in range(1,10)} | {f'LPT{i}' for i in range(1,10)}
     stem = Path(base).stem.upper()
     if stem in reserved:
         base = f'_{base}'
-    # 如果清洗后为空，则使用默认名
+    # If empty after cleanup, use default
     if base == '' or base in ('.', '..'):
-        base = 'polycrystal.txt'
+        base = 'polycrystal.lmp'
     return base
 
 
 def generate_polycrystal(box: Union[Sequence, int, float, str], random_val: int, out: Union[str, Path] = 'polycrystal.txt', xsf_path: Union[str, Path] = 'aluminium.xsf', show_preview: bool = True, print_command: bool = True):
-    """生成 polycrystal 文件的函数化接口。
+    """Functional interface to generate polycrystal file.
 
-    参数:
-      box: 单个值、字符串或长度为1/3的序列；例如 70 或 '70 80 90' 或 [70] 或 [70,80,90]
-      random_val: random 后面的整数
-      out: 输出文件路径（默认 'polycrystal.txt'）
-      xsf_path: 用于提示的 aluminium.xsf 路径（默认 'aluminium.xsf'）
-      show_preview: 是否在完成后打印文件内容
-      print_command: 是否打印建议的 atomsk 命令
+    Parameters:
+      box: single value, string, or sequence of length 1/3; e.g. 70 or '70 80 90' or [70] or [70,80,90]
+      random_val: integer after random
+      out: output file path (default 'polycrystal.txt')
+      xsf_path: path to aluminium.xsf for suggestions (default 'aluminium.xsf')
+      show_preview: whether to print file content after generation
+      print_command: whether to print suggested atomsk command
 
-    返回: 输出文件的 Path 对象
+    Returns: Path object of the output file
     """
     box_vals = _normalize_box_input(box)
-    # 清洗并规范输出路径：仅清洗文件名部分，保留用户可能指定的目录
+    # Clean and normalize output path
     out_p = Path(out)
     try:
         parent = out_p.parent
@@ -112,44 +112,44 @@ def generate_polycrystal(box: Union[Sequence, int, float, str], random_val: int,
     safe_name = _sanitize_filename(out_p.name)
     out_path = parent / safe_name
     if str(out_path) != str(out_p):
-        # 提示用户我们对文件名做了修正
+        # Notify user of filename correction
         if show_preview:
-            print(f"注意：输出文件名已被清洗为：{out_path.name}")
+            print(f"Note: Output filename sanitized to: {out_path.name}")
 
     try:
         write_polycrystal(out_path, box_vals, int(random_val))
     except Exception as e:
-        # 写入失败时尝试回退到当前工作目录下的备份文件名
+        # Fallback to temp file on failure
         import time, tempfile
         fallback_name = f'polycrystal_{int(time.time())}.txt'
         fallback_path = Path('.') / fallback_name
         try:
             write_polycrystal(fallback_path, box_vals, int(random_val))
         except Exception as e2:
-            # 如果回退也失败，抛出原始错误（包含回退错误信息）
-            raise OSError(f'尝试写入 {out_path} 失败（原因：{e}），且回退写入到 {fallback_path} 也失败（原因：{e2}）。')
+            # If fallback fails, raise original error
+            raise OSError(f'Failed to write {out_path} ({e}), and fallback {fallback_path} also failed ({e2}).')
         else:
             if show_preview:
-                print(f'注意：无法写入指定路径 {out_path}，已回退并写入：{fallback_path.resolve()}')
+                print(f'Note: Could not write to {out_path}, fell back to: {fallback_path.resolve()}')
             out_path = fallback_path
 
     if show_preview:
-        print('已生成：{}'.format(out_path.resolve()))
-        print('\n生成内容预览:')
+        print('Generated: {}'.format(out_path.resolve()))
+        print('\nContent preview:')
         print(out_path.read_text(encoding='utf-8'))
 
     xsf_p = Path(xsf_path)
     if not xsf_p.exists():
-        print('提示：当前目录中未发现 aluminium.xsf（{}）。请确保在运行 atomsk 命令时该文件路径正确或放在同一目录。'.format(xsf_p.resolve()))
+        print('Hint: aluminium.xsf ({}) not found. Ensure correct path or place in same directory when running atomsk.'.format(xsf_p.resolve()))
 
     if print_command:
-        print('\n下一步：在安装有 atomsk 的终端中运行以下命令以生成多晶：')
+        print('\nNext step: Run the following command in a terminal with atomsk installed to generate the polycrystal:')
         print('atomsk --polycrystal {} {} polycrystal.lmp'.format(xsf_p.name, out_path.name))
 
     return out_path
 
 
-# 替换原有的 __main__ 提示为 GUI 主函数（使用 tkinter）
+# Replace original __main__ prompt with GUI (using tkinter)
 try:
     import tkinter as tk
     from tkinter import messagebox, filedialog, scrolledtext
@@ -158,10 +158,10 @@ except Exception:
 
 
 def _confirm_and_delete_all_except(directory: Path, keep_name: str, log_fn=None):
-    """删除 directory 下的所有文件/文件夹，但保留名字为 keep_name 的项。
+    """Delete all files/folders in directory except the one named keep_name.
 
-    返回删除的路径列表。
-    log_fn 可为函数（用于写入日志），若为 None 则忽略。
+    Returns list of deleted paths.
+    log_fn can be a function for logging.
     """
     deleted = []
     for child in directory.iterdir():
@@ -182,35 +182,36 @@ def _confirm_and_delete_all_except(directory: Path, keep_name: str, log_fn=None)
 
 
 def main_gui():
-    """启动一个简单的 Tkinter 界面，让用户输入 box、random 和文件路径，并生成 polycrystal 文件。
+    """Start a simple Tkinter GUI for inputing box, random, and file path to generate polycrystal file.
 
-    新增功能：可以选择在生成后运行 atomsk，并在 atomsk 成功后（或直接）删除除 polycrystal.lmp 外的所有文件（需要用户二次确认）。
-    如果系统没有 tkinter（tk 为 None），将打印基于控制台的提示。
+    Features: Optionally run atomsk after generation, and cleanup files other than polycrystal.lmp.
+    Prints console hints if tkinter is unavailable.
     """
     if tk is None:
-        print('当前 Python 环境中不可用 tkinter，无法启动 GUI。')
-        print('请直接从 Python 导入并调用 generate_polycrystal(box, random_val, out, xsf_path)')
+        print('tkinter not available in current Python environment, GUI cannot start.')
+        print('Please import and call generate_polycrystal(box, random_val, out, xsf_path) directly.')
         return
 
     root = tk.Tk()
-    root.title('Polycrystal 生成器')
+    root.title('Polycrystal Generator')
 
     frm = tk.Frame(root, padx=10, pady=10)
     frm.pack(fill=tk.BOTH, expand=True)
 
-    tk.Label(frm, text='Box (单值或三个值，例如: 70 或 70 80 90)：').grid(row=0, column=0, sticky='w')
+
+    tk.Label(frm, text='Box (single value or three values, e.g. 70 or 70 80 90):').grid(row=0, column=0, sticky='w')
     ent_box = tk.Entry(frm, width=30)
     ent_box.insert(0, '70')
     ent_box.grid(row=0, column=1, sticky='w')
 
-    tk.Label(frm, text='Random (整数)：').grid(row=1, column=0, sticky='w')
+    tk.Label(frm, text='Random (integer):').grid(row=1, column=0, sticky='w')
     ent_random = tk.Entry(frm, width=30)
     ent_random.insert(0, '20')
     ent_random.grid(row=1, column=1, sticky='w')
 
-    tk.Label(frm, text='输出文件 (polycrystal.txt)：').grid(row=2, column=0, sticky='w')
+    tk.Label(frm, text='Output file (polycrystal.lmp):').grid(row=2, column=0, sticky='w')
     ent_out = tk.Entry(frm, width=30)
-    ent_out.insert(0, 'polycrystal.txt')
+    ent_out.insert(0, 'polycrystal.lmp')
     ent_out.grid(row=2, column=1, sticky='w')
 
     def browse_out():
@@ -219,10 +220,10 @@ def main_gui():
             ent_out.delete(0, tk.END)
             ent_out.insert(0, p)
 
-    btn_browse_out = tk.Button(frm, text='浏览', command=browse_out)
+    btn_browse_out = tk.Button(frm, text='Browse', command=browse_out)
     btn_browse_out.grid(row=2, column=2, padx=5)
 
-    tk.Label(frm, text='aluminium.xsf 路径：').grid(row=3, column=0, sticky='w')
+    tk.Label(frm, text='aluminium.xsf path:').grid(row=3, column=0, sticky='w')
     ent_xsf = tk.Entry(frm, width=30)
     ent_xsf.insert(0, 'aluminium.xsf')
     ent_xsf.grid(row=3, column=1, sticky='w')
@@ -233,19 +234,19 @@ def main_gui():
             ent_xsf.delete(0, tk.END)
             ent_xsf.insert(0, p)
 
-    btn_browse_xsf = tk.Button(frm, text='浏览', command=browse_xsf)
+    btn_browse_xsf = tk.Button(frm, text='Browse', command=browse_xsf)
     btn_browse_xsf.grid(row=3, column=2, padx=5)
 
-    # 运行 atomsk 与清理选项
+    # Atomsk and cleanup options
     run_atomsk_var = tk.BooleanVar(value=False)
     clean_var = tk.BooleanVar(value=False)
-    chk_run = tk.Checkbutton(frm, text='生成后自动运行 atomsk', variable=run_atomsk_var)
+    chk_run = tk.Checkbutton(frm, text='Auto-run atomsk after generation', variable=run_atomsk_var)
     chk_run.grid(row=6, column=1, sticky='w')
-    chk_clean = tk.Checkbutton(frm, text='生成后删除除 polycrystal.lmp 外的所有文件（需确认）', variable=clean_var)
+    chk_clean = tk.Checkbutton(frm, text='Delete all files except polycrystal.lmp after generation (confirm required)', variable=clean_var)
     chk_clean.grid(row=7, column=1, sticky='w')
 
-    # 日志/预览文本框
-    tk.Label(frm, text='日志 / 生成内容预览：').grid(row=4, column=0, sticky='nw', pady=(10,0))
+    # Log/Preview
+    tk.Label(frm, text='Log / Preview:').grid(row=4, column=0, sticky='nw', pady=(10,0))
     txt_preview = scrolledtext.ScrolledText(frm, width=80, height=12)
     txt_preview.grid(row=4, column=1, columnspan=2, pady=(10,0))
 
@@ -260,50 +261,50 @@ def main_gui():
         out_path = ent_out.get().strip()
         xsf_path = ent_xsf.get().strip()
 
-        # 解析并校验
+        # Parse and validate
         try:
             box_vals = _normalize_box_input(box_str)
         except Exception as e:
-            messagebox.showerror('参数错误', f'Box 参数解析失败：{e}')
+            messagebox.showerror('Parameter Error', f'Box parameter parsing failed: {e}')
             return
 
         try:
             rnd = int(rnd_str)
         except Exception:
-            messagebox.showerror('参数错误', 'Random 必须是整数')
+            messagebox.showerror('Parameter Error', 'Random must be an integer')
             return
 
         try:
             outp = generate_polycrystal(box_vals, rnd, out=out_path, xsf_path=xsf_path, show_preview=False, print_command=False)
         except Exception as e:
-            messagebox.showerror('写入失败', f'生成文件时出错：{e}')
+            messagebox.showerror('Write Failed', f'Error generating file: {e}')
             return
 
-        # 显示生成内容
+        # Show content
         try:
             content = outp.read_text(encoding='utf-8')
-            log('=== 生成内容 ===')
+            log('=== Generated Content ===')
             log(content.strip())
         except Exception as e:
-            log(f'无法读取生成文件：{e}')
+            log(f'Cannot read generated file: {e}')
 
-        # 如果勾选运行 atomsk
+        # If run atomsk checked
         dir_for_ops = Path(outp).parent.resolve()
         atomsk_ran = False
         pre_existing = set(dir_for_ops.iterdir())
         created = set()
         if run_atomsk_var.get():
             cmd = ['atomsk', '--polycrystal', xsf_path, str(outp), 'polycrystal.lmp', '-wrap']
-            log('运行 atomsk: ' + ' '.join(cmd))
+            log('Running atomsk: ' + ' '.join(cmd))
             try:
                 proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(dir_for_ops))
             except FileNotFoundError:
-                messagebox.showerror('执行失败', '未找到 atomsk。请确保 atomsk 已安装并在 PATH 中。')
+                messagebox.showerror('Execution Failed', 'atomsk not found. Ensure atomsk is installed and in PATH.')
                 log('Error: atomsk not found in PATH')
                 return
             except Exception as e:
-                messagebox.showerror('执行失败', f'运行 atomsk 时出错：{e}')
-                log(f'运行 atomsk 异常：{e}')
+                messagebox.showerror('Execution Failed', f'Error running atomsk: {e}')
+                log(f'atomsk runtime exception: {e}')
                 return
 
             log('--- atomsk stdout ---')
@@ -312,50 +313,50 @@ def main_gui():
             log(proc.stderr.strip())
 
             if proc.returncode != 0:
-                messagebox.showerror('atomsk 失败', f'atomsk 返回非零退出码：{proc.returncode}\n请查看日志以获取详细信息。')
+                messagebox.showerror('atomsk Failed', f'atomsk returned non-zero exit code: {proc.returncode}\nPlease check logs.')
                 return
             atomsk_ran = True
-            log('atomsk 执行成功，已生成 polycrystal.lmp（若 atomsk 支持此操作）')
+            log('atomsk executed successfully, generated polycrystal.lmp (if supported)')
             post_existing = set(dir_for_ops.iterdir())
             created = post_existing - pre_existing
-            # 显示创建的文件列表
+            # Show created files
             if created:
-                log('atomsk 本次运行创建了下面的文件/文件夹：')
+                log('atomsk created the following files/folders:')
                 for p in sorted(created):
                     log(f'  {p.name}')
             else:
-                log('atomsk 本次运行未检测到新创建的文件')
+                log('atomsk did not create new files this run')
 
-        # 如果勾选清理
+        # If cleanup checked
         if clean_var.get():
-            # 清理逻辑：
-            # - 如果本次运行了 atomsk，删除 atomsk 本次创建的文件（除 polycrystal.lmp）以及本次使用的 polycrystal.txt
-            # - 如果本次未运行 atomsk，只询问并只删除本次使用的 polycrystal.txt（不删除其他文件）
+            # Cleanup logic:
+            # - If atomsk ran, delete files created by atomsk (except polycrystal.lmp) AND the polycrystal.txt used
+            # - If atomsk did not run, ask to delete only polycrystal.txt
             if atomsk_ran:
                 created_list = list(created)
-                # 列出将要删除的目标（排除 .lmp）
+                # List targets to delete (exclude .lmp)
                 to_delete = [p for p in created_list if p.name != 'polycrystal.lmp']
-                # 确保也删除本次使用的 polycrystal.txt
+                # Ensure polycrystal.txt is also deleted
                 if Path(outp).exists() and Path(outp) not in to_delete:
                     to_delete.append(Path(outp))
 
                 if not to_delete:
-                    messagebox.showinfo('清理', '没有发现需要删除的 atomsk 生成文件，只有 polycrystal.txt 将被删除（若存在）。')
-                    # 仅删除 polycrystal.txt（如果存在）
+                    messagebox.showinfo('Cleanup', 'No atomsk-generated files to delete, only polycrystal.txt will be deleted (if exists).')
+                    # Only delete polycrystal.txt
                     if Path(outp).exists():
                         Path(outp).unlink()
                         log(f'Deleted: {outp}')
-                        messagebox.showinfo('清理完成', f'已删除: {outp}')
+                        messagebox.showinfo('Cleanup Complete', f'Deleted: {outp}')
                     else:
-                        messagebox.showinfo('清理', '未检测到 polycrystal.txt，未删除任何文件')
+                        messagebox.showinfo('Cleanup', 'polycrystal.txt not found, nothing deleted')
                 else:
                     preview_list = '\n'.join([p.name for p in to_delete[:50]])
                     if len(to_delete) > 50:
-                        preview_list += '\n...(还有 %d 个项目)...' % (len(to_delete) - 50)
+                        preview_list += '\n...(and %d more)...' % (len(to_delete) - 50)
 
-                    confirm = messagebox.askyesno('确认删除', f'将删除 atomsk 本次运行创建的以下文件（保留 polycrystal.lmp）：\n\n{preview_list}\n\n是否继续？ 此操作不可撤销。')
+                    confirm = messagebox.askyesno('Confirm Delete', f'Deleting files created by atomsk (keeping polycrystal.lmp):\n\n{preview_list}\n\nContinue? This cannot be undone.')
                     if confirm:
-                        log('开始删除 atomsk 生成的文件...')
+                        log('Deleting atomsk generated files...')
                         deleted = []
                         for p in to_delete:
                             try:
@@ -367,55 +368,55 @@ def main_gui():
                                 log(f'Deleted: {p.name}')
                             except Exception as e:
                                 log(f'Failed to delete {p}: {e}')
-                        messagebox.showinfo('清理完成', f'已删除 {len(deleted)} 项（排除 polycrystal.lmp）')
+                        messagebox.showinfo('Cleanup Complete', f'Deleted {len(deleted)} items (excluding polycrystal.lmp)')
                     else:
-                        log('用户取消了 atomsk 生成文件的删除')
+                        log('User cancelled cleanup of atomsk files')
             else:
-                # 未运行 atomsk，本次仅删除 polycrystal.txt（需用户确认）
+                # Atomsk not flow, only delete polycrystal.txt (confirm first)
                 if Path(outp).exists():
-                    confirm = messagebox.askyesno('确认删除', f'未检测到 atomsk 运行。是否只删除本次生成的 polycrystal 文件：\n{outp} ?')
+                    confirm = messagebox.askyesno('Confirm Delete', f'Atomsk did not run. Delete generated polycrystal file only:\n{outp} ?')
                     if confirm:
                         try:
                             Path(outp).unlink()
                             log(f'Deleted: {outp}')
-                            messagebox.showinfo('清理完成', f'已删除: {outp}')
+                            messagebox.showinfo('Cleanup Complete', f'Deleted: {outp}')
                         except Exception as e:
-                            messagebox.showerror('删除失败', f'删除 {outp} 时失败：{e}')
+                            messagebox.showerror('Delete Failed', f'Failed to delete {outp}: {e}')
                     else:
-                        log('用户取消了仅删除 polycrystal.txt 的操作')
+                        log('User cancelled delete of polycrystal.txt')
                 else:
-                    messagebox.showinfo('清理', 'polycrystal.txt 不存在，未删除任何文件')
+                    messagebox.showinfo('Cleanup', 'polycrystal.txt not found, nothing deleted')
 
         # After cleanup (if any), convert polycrystal.lmp to a dump using atomsk and save both files
         try:
             poly_lmp_path = dir_for_ops / 'polycrystal.lmp'
             if poly_lmp_path.exists():
                 cmd_dump = ['atomsk', poly_lmp_path.name, 'dump']
-                log('运行 atomsk 将 polycrystal.lmp 转换为 dump: ' + ' '.join(cmd_dump))
+                log('Running atomsk to convert polycrystal.lmp to dump: ' + ' '.join(cmd_dump))
                 try:
                     proc_dump = subprocess.run(cmd_dump, capture_output=True, text=True, cwd=str(dir_for_ops))
                 except FileNotFoundError:
-                    log('Error: 未找到 atomsk，可选地请安装 atomsk 并将其加入 PATH，跳过 dump 生成。')
+                    log('Error: atomsk not found. Optional dump generation skipped.')
                 except Exception as e:
-                    log(f'运行 atomsk 转换为 dump 时发生异常: {e}')
+                    log(f'Exception converting to dump: {e}')
                 else:
                     log('--- atomsk(dump) stdout ---')
                     log(proc_dump.stdout.strip())
                     log('--- atomsk(dump) stderr ---')
                     log(proc_dump.stderr.strip())
                     if proc_dump.returncode != 0:
-                        log(f'atomsk 转换返回非零退出码: {proc_dump.returncode} (请查看 stderr)')
+                        log(f'atomsk conversion returned non-zero exit code: {proc_dump.returncode} (see stderr)')
                     else:
-                        log('atomsk 转换为 dump 成功，polycrystal.lmp 与生成的 dump 已保存在：' + str(dir_for_ops))
+                        log('atomsk dump conversion successful. polycrystal.lmp and dump saved in: ' + str(dir_for_ops))
             else:
-                log('polycrystal.lmp 未找到，跳过转换为 dump 步骤')
+                log('polycrystal.lmp not found, skipping dump conversion')
         except Exception as e:
-            log(f'尝试生成 dump 时发生未预料的错误: {e}')
+            log(f'Unexpected error during dump generation: {e}')
 
-    btn_generate = tk.Button(frm, text='生成 polycrystal.txt', command=on_generate, bg='#4caf50', fg='white')
+    btn_generate = tk.Button(frm, text='Generate polycrystal.txt', command=on_generate, bg='#4caf50', fg='white')
     btn_generate.grid(row=5, column=1, pady=10, sticky='w')
 
-    btn_quit = tk.Button(frm, text='退出', command=root.destroy)
+    btn_quit = tk.Button(frm, text='Exit', command=root.destroy)
     btn_quit.grid(row=5, column=2, pady=10, sticky='e')
 
     root.mainloop()

@@ -16,7 +16,7 @@ import argparse
 import numpy as np
 from typing import Tuple
 
-# OVITO 依赖在导入阶段进行捕获，便于在没有安装 OVITO 的环境中给出友好提示
+# OVITO dependency import is wrapped to provide a friendly message when OVITO is not installed.
 try:
     import ovito
     from ovito.modifiers import CentroSymmetryModifier, CoordinationAnalysisModifier
@@ -210,7 +210,7 @@ def main_gui():
 
 
 if __name__ == '__main__':
-    # 与仓库中其他 generate_* 文件一致：如果有 GUI 支持则优先打开，否则使用 CLI
+    # Match other generate_* scripts: prefer GUI when available, otherwise fall back to CLI.
     if ovito is not None:
         # prefer GUI when tkinter available
         try:
