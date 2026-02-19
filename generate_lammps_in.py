@@ -42,14 +42,14 @@ timestep {timestep}
 thermo {thermo}
 thermo_style        {thermo_style}
 variable T_anneal equal 373.2
-variable T_cool_start equal ${T_anneal}
+variable T_cool_start equal 373.2
 variable T_cool_end equal 0.1
 variable CoolingRate equal 3
-fix 1 all npt temp ${T_anneal} ${T_anneal} 0.1 iso 0 0 1.0
+fix 1 all npt temp ${{T_anneal}} ${{T_anneal}} 0.1 iso 0 0 1.0
 dump 1 all custom 1000 dump_anneal.lammpstrj id type x y z
 run 250000
 unfix 1
-fix 2 all npt temp ${T_cool_start} ${T_cool_end} 2.0 iso 0 0 1.0
+fix 2 all npt temp ${{T_cool_start}} ${{T_cool_end}} 2.0 iso 0 0 1.0
 dump 2 all custom 1000 dump_cool.lammpstrj id type x y z
 run 124360
 unfix 2
@@ -63,7 +63,7 @@ write_restart baseline.restart
 write_data baseline.data
 run 0
 variable total_atoms equal count(all)
-variable atom_id loop ${total_atoms}
+variable atom_id loop ${{total_atoms}}
 label loop_start
 
 # 清除当前体系，以便后续 read_restart 可以合法定义 box
@@ -86,7 +86,7 @@ thermo 1000
 thermo_style custom step pe
 variable totalenergy equal pe
 
-set atom ${atom_id} type 2
+set atom ${{atom_id}} type 2
 
 minimize 0 1e-12 10000 10000
 run 0
@@ -156,14 +156,14 @@ def main_gui():
     frm = tk.Frame(root, padx=10, pady=10)
     frm.pack(fill=tk.BOTH, expand=True)
 
-    tk.Label(frm, text='read_data (例如: medium_final_atoms.lmp extra/atom/types 1):').grid(row=0, column=0, sticky='w')
+    tk.Label(frm, text='read_data (例如: polycrystal.lmp extra/atom/types 1):').grid(row=0, column=0, sticky='w')
     ent_read = tk.Entry(frm, width=50)
-    ent_read.insert(0, 'medium_final_atoms.lmp extra/atom/types 1')
+    ent_read.insert(0, 'polycrystal.lmp extra/atom/types 1')
     ent_read.grid(row=0, column=1, sticky='w')
 
-    tk.Label(frm, text='append 文件名 (例如: medium_Al_Cu_eam4.txt):').grid(row=1, column=0, sticky='w')
+    tk.Label(frm, text='append 文件名 (例如: Al_Cu.txt):').grid(row=1, column=0, sticky='w')
     ent_append = tk.Entry(frm, width=50)
-    ent_append.insert(0, 'medium_Al_Cu_eam4.txt')
+    ent_append.insert(0, 'Al_Cu.txt')
     ent_append.grid(row=1, column=1, sticky='w')
 
     tk.Label(frm, text='EAM 文件 (例如: AlCu.eam):').grid(row=2, column=0, sticky='w')
@@ -332,4 +332,3 @@ def main_gui():
 
 if __name__ == '__main__':
     main_gui()
-
