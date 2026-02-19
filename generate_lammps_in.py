@@ -38,29 +38,67 @@ mass 1 {mass1}
 mass 2 {mass2}
 pair_style  eam/alloy
 pair_coeff * * {eam_file} {species_line}
-variable total_atoms equal count(all)
 timestep {timestep}
 thermo {thermo}
 thermo_style        {thermo_style}
-minimize 0 1e-8 10000 10000
+variable T_anneal equal 373.2
+variable T_cool_start equal ${T_anneal}
+variable T_cool_end equal 0.1
+variable CoolingRate equal 3
+fix 1 all npt temp ${T_anneal} ${T_anneal} 0.1 iso 0 0 1.0
+dump 1 all custom 1000 dump_anneal.lammpstrj id type x y z
+run 250000
+unfix 1
+fix 2 all npt temp ${T_cool_start} ${T_cool_end} 2.0 iso 0 0 1.0
+dump 2 all custom 1000 dump_cool.lammpstrj id type x y z
+run 124360
+unfix 2
+undump 1
+undump 2
+min_style cg
+min_modify dmax 0.1
+minimize 0 1.0e-12 10000 100000
 write_dump all atom dump.atom
-variable atom_id loop ${{total_atoms}}
+write_restart baseline.restart
+write_data baseline.data
+run 0
+variable total_atoms equal count(all)
+variable atom_id loop ${total_atoms}
 label loop_start
 
-set atom ${{atom_id}} type 2
+# 清除当前体系，以便后续 read_restart 可以合法定义 box
+clear
 
+units           metal
+atom_style      atomic
+boundary        p p p
+
+
+read_restart baseline.restart
+
+mass 1 26.98
+mass 2 63.55
+pair_style  eam/alloy
+pair_coeff * * AlCu.eam.alloy Al Cu
+
+timestep 0.001
+thermo 1000
+thermo_style custom step pe
+variable totalenergy equal pe
+
+set atom ${atom_id} type 2
+
+minimize 0 1e-12 10000 10000
 run 0
 
-variable totalenergy equal "pe"
-
 print "${{atom_id}} ${{totalenergy}}" append {append_txt}
-set atom ${{atom_id}} type 1
 
 next atom_id
 jump SELF loop_start
 run 0
 print "Done!"
-#mpiexec -np 4 lmp -in in -pk omp 4 -sf omp
+#mpiexec -np 4 lmp -in in.lmp -pk omp 4 -sf omp
+
 '''
 
 
@@ -294,3 +332,4 @@ def main_gui():
 
 if __name__ == '__main__':
     main_gui()
+
