@@ -411,13 +411,23 @@ class WorkflowApp:
         append = self.ent_append.get().strip() or 'Al_Cu.txt'
         out = self.ent_in_out.get().strip() or 'in.lmp'
         try:
-            path = generate_lammps_in(read_data, append, eam, out=out)
-            self.last_in_path = Path(path)
-            self.log(f'Generated in file: {path}')
+            # Infer out_tui from out
+            p_out = Path(out)
+            if p_out.name == 'in':
+                 out_curr_tui = p_out.parent / 'in_tui'
+            else:
+                 out_curr_tui = p_out.parent / (p_out.stem + '_tui' + p_out.suffix)
+
+            path_tui, path_in = generate_lammps_in(read_data, append, eam, out_tui=str(out_curr_tui), out_in=out)
+            self.last_in_path = Path(path_in)
+            self.log(f'Generated files: {path_tui}, {path_in}')
             try:
-                self.log(path.read_text(encoding='utf-8'))
+                self.log(f'--- {path_tui.name} ---')
+                self.log(path_tui.read_text(encoding='utf-8'))
+                self.log(f'--- {path_in.name} ---')
+                self.log(path_in.read_text(encoding='utf-8'))
             except Exception as e:
-                self.log(f'Failed to read in file: {e}')
+                self.log(f'Failed to read generated files: {e}')
         except Exception as e:
             self.log('Failed to generate in file: ' + str(e))
             traceback.print_exc()
@@ -471,8 +481,41 @@ class WorkflowApp:
         else:
             cmd = [lmp_bin, '-in', in_path.name]
 
+        # Check if there is a corresponding _tui file to run first
+        tui_path = None
+        # Logic matches generate_lammps_in:
+        # If out="in", tui="in_tui"
+        # If out="in.lmp", tui="in_tui.lmp"
+        candidate_same_ext = in_path.with_name(f"{in_path.stem}_tui{in_path.suffix}")
+        if candidate_same_ext.exists():
+            tui_path = candidate_same_ext
+        else:
+            # Fallback: check no extension or different extension common patterns
+            candidate_no_ext = in_path.with_name(f"{in_path.stem}_tui")
+            if candidate_no_ext.exists():
+                tui_path = candidate_no_ext
+
         def _run_lammps(prepared_cmd, workdir):
-            self.log('Starting LAMMPS: ' + ' '.join(prepared_cmd) + f' (cwd={workdir})')
+            if tui_path:
+                self.log(f'Detected setup script {tui_path.name}; running it first...')
+                if mpiexec and ranks > 1:
+                    cmd_tui = [mpiexec, '-n', str(ranks), lmp_bin, '-in', tui_path.name]
+                else:
+                    cmd_tui = [lmp_bin, '-in', tui_path.name]
+
+                self.log('Starting LAMMPS (Setup): ' + ' '.join(cmd_tui) + f' (cwd={workdir})')
+                try:
+                    proc_tui = subprocess.run(cmd_tui, capture_output=True, text=True, cwd=str(workdir))
+                    if proc_tui.returncode != 0:
+                        self.log(f'Setup script {tui_path.name} failed with code {proc_tui.returncode}. Aborting main run.')
+                        self.root.after(0, lambda: messagebox.showerror('Setup failed', f'Setup script {tui_path.name} failed.'))
+                        return
+                    self.log(f'Setup script {tui_path.name} finished successfully.')
+                except Exception as e:
+                    self.log(f'Failed to run setup script: {e}')
+                    return
+
+            self.log('Starting LAMMPS (Main): ' + ' '.join(prepared_cmd) + f' (cwd={workdir})')
             try:
                 pre_existing = set(Path(workdir).iterdir())
                 proc = subprocess.run(prepared_cmd, capture_output=True, text=True, cwd=str(workdir))
