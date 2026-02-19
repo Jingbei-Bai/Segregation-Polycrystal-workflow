@@ -2,14 +2,17 @@
 """
 generate_lammps_in.py
 
-生成 LAMMPS 输入文件（in 文件）。提供函数接口 `generate_lammps_in(...)` 和一个简单的 Tkinter GUI（可视化窗口）用于交互式输入。
+Generate a LAMMPS input file (an in file). Provides the function interface
+`generate_lammps_in(...)` and a simple Tkinter GUI (visual window) for
+interactive input.
 
-用户需要指定三个必输项：
-1) read_data 后面的 lmp 文件名（及可选附加参数，比如 `extra/atom/types 1`）
-2) print append 后面的 txt 文件名
-3) pair_coeff 行中使用的 eam 文件（例如 AlCu.eam）和可选物种名
+Users must specify three required items:
+1) The lmp file name after read_data (and optional extra args, e.g. `extra/atom/types 1`)
+2) The txt file name after print append
+3) The eam file used in the pair_coeff line (e.g. AlCu.eam) and optional species names
 
-脚本不会执行 LAMMPS，只会生成文本文件并在 GUI 中显示建议运行命令。
+This script does not execute LAMMPS; it only generates a text file and shows
+suggested run commands in the GUI.
 """
 
 from pathlib import Path
@@ -66,7 +69,6 @@ variable total_atoms equal count(all)
 variable atom_id loop ${{total_atoms}}
 label loop_start
 
-# 清除当前体系，以便后续 read_restart 可以合法定义 box
 clear
 
 units           metal

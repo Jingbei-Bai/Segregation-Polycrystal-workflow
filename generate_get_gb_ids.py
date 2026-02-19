@@ -79,7 +79,7 @@ def get_gb_ids_and_indices(polycrystal: str) -> Tuple[np.ndarray, np.ndarray]:
     node_final.modifiers.append(coord)
     node_final.modifiers.append(cna)
     csm = CentroSymmetryModifier()
-    # 为 FCC 设置合理的邻居数（常用 12）
+    # Set a reasonable neighbor count for FCC (commonly 12)
     try:
         csm.num_neighbors = 12
     except Exception:
@@ -138,7 +138,7 @@ def main_cli():
     np.save(out_prefix + '_ids.npy', gb_ids)
     np.save(out_prefix + '_indices.npy', gb_indices)
 
-    # 也写入简洁的 txt 方便查看
+    # Also write a simple txt for quick inspection
     with open(out_prefix + '_ids.txt', 'w', encoding='utf-8') as fh:
         for v in gb_ids:
             fh.write(str(int(v)) + '\n')

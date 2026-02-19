@@ -295,7 +295,7 @@ def main_gui():
 
 
 if __name__ == '__main__':
-    # 优先 GUI（若可用），否则 CLI
+    # Prefer GUI (if available), otherwise CLI
     if tk is not None:
         main_gui()
     else:

@@ -2,9 +2,7 @@
 """
 generate_polycrystal.py
 
-提供函数式接口：generate_polycrystal(box, random_val, out='polycrystal.txt', ...)
-
-原先的 argparse 已移除；如果你需要命令行使用我可以另外加一个简单的交互器或保留 argparse 作为可选模块。
+generate_polycrystal(box, random_val, out='polycrystal.txt', ...)
 """
 
 from pathlib import Path
