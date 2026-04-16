@@ -1,0 +1,47 @@
+# Site-by-site substitution scan in a multicomponent HEA
+# The original atom types are stored once, each site is temporarily converted
+# to the target type, the total energy is evaluated, and the original type is
+# restored before moving to the next site.
+
+units           metal
+atom_style      atomic
+boundary        p p p
+read_data       HEA.lmp
+
+# Interatomic potential
+pair_style      meam
+pair_coeff      * * library.meam Co Ni Cr Fe Mn CoNiCrFeMn.meam Co Ni Cr Fe Mn
+
+# Store the original atom types once for later restoration
+fix             backup_types all store/state 0 type
+variable        original_type atom f_backup_types
+
+# Loop control
+variable        total_atoms equal count(all)
+variable        atom_id loop ${total_atoms}
+variable        totalenergy equal pe
+
+# Here the test substitution species is type 1
+print           "# Atom_ID Potential_Energy" file hea_site_substitution_energies.txt
+thermo          1000
+thermo_style    custom step pe
+
+label           loop_start
+
+# Temporarily assign the current atom to the test species
+set             atom ${atom_id} type 1
+
+# Recompute the energy without advancing the trajectory
+run             0
+print           "${atom_id} ${totalenergy}" append hea_site_substitution_energies.txt
+
+# Restore the original atom type
+set             atom ${atom_id} type v_original_type
+
+next            atom_id
+jump            SELF loop_start
+
+print           "Done."
+
+# Example run command:
+# mpiexec -np 4 lmp -in in.lmp -pk omp 4 -sf omp

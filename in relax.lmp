@@ -1,0 +1,48 @@
+# Annealing, cooling, and final minimization of an elemental polycrystal
+# The structure is annealed at the target temperature, cooled to near 0 K,
+# and then relaxed by conjugate-gradient minimization.
+
+units           metal
+atom_style      atomic
+boundary        p p p
+read_data       70+5.lmp
+
+# Atomic mass and interatomic potential (elemental Al case shown here)
+mass            1 26.98
+pair_style      eam/alloy
+pair_coeff      * * AlCu.eam.alloy Al
+
+# Time integration settings
+timestep        0.001
+variable        T_anneal      equal 373.2
+variable        T_cool_start  equal ${T_anneal}
+variable        T_cool_end    equal 0.1
+variable        CoolingRate   equal 3
+
+# High-temperature annealing
+fix             anneal all npt temp ${T_anneal} ${T_anneal} 0.1 iso 0 0 1.0
+dump            anneal_dump all custom 1000 elemental_polycrystal_anneal.lammpstrj id type x y z
+thermo          1000
+thermo_style    custom step temp press vol lx ly lz
+run             250000
+unfix           anneal
+
+# Controlled cooling to near 0 K
+fix             cool all npt temp ${T_cool_start} ${T_cool_end} 2.0 iso 0 0 1.0
+dump            cool_dump all custom 1000 elemental_polycrystal_cooling.lammpstrj id type x y z
+thermo          1000
+thermo_style    custom step temp press vol lx ly lz
+run             124360
+unfix           cool
+undump          anneal_dump
+undump          cool_dump
+
+# Final static relaxation
+min_style       cg
+min_modify      dmax 0.1
+minimize        0 1.0e-12 10000 100000
+write_data      elemental_polycrystal_annealed.data
+print           "Simulation finished. Final minimized structure written to elemental_polycrystal_annealed.data."
+
+# Example run command:
+# mpiexec -np 4 lmp -in in.lmp -pk omp 4 -sf omp

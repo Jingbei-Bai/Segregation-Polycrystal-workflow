@@ -1,0 +1,49 @@
+# Binary polycrystal site-by-site substitution energy scan
+# This script reads a relaxed Fe polycrystal, temporarily replaces each site
+# with V, evaluates the total energy, and writes one energy value per site.
+
+units           metal
+atom_style      atomic
+boundary        p p p
+read_data       140+20.lmp extra/atom/types 1
+
+# Atomic masses (type 1 = Fe, type 2 = V)
+mass            1 55.85
+mass            2 50.94
+
+# Interatomic potential
+pair_style      eam/fs
+pair_coeff      * * FeV.eam.fs Fe V
+
+# Basic settings
+variable        total_atoms equal atoms
+variable        atom_id loop ${total_atoms}
+variable        totalenergy equal pe
+
+timestep        0.001
+thermo          1000
+thermo_style    custom step pe
+
+# Relax the initial structure before the substitution scan
+minimize        0 1.0e-12 10000 10000
+
+label           loop_start
+
+# Substitute the current site with V (type 2)
+set             atom ${atom_id} type 2
+
+# Recompute the energy without additional time integration
+run             0
+print           "${atom_id} ${totalenergy}" append binary_site_substitution_energies.txt
+
+# Restore the original Fe atom (type 1)
+set             atom ${atom_id} type 1
+
+next            atom_id
+jump            SELF loop_start
+
+run             0
+print           "Done."
+
+# Example run command:
+# mpiexec -np 4 lmp -in in.lmp -pk omp 4 -sf omp

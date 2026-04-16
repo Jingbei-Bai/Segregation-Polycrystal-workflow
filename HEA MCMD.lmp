@@ -1,0 +1,53 @@
+# Hybrid MC/MD relaxation of a CoCrFeMnNi polycrystal at 300 K
+# MD is performed in the NPT ensemble, and multiple atom-swap MC moves are
+# inserted during the trajectory to enhance chemical equilibration.
+
+units           metal
+atom_style      atomic
+boundary        p p p
+read_data       after_mc.lmp
+
+# Thermodynamic conditions
+variable        temp    equal 300.0
+variable        press   equal 0.0
+variable        seed    equal 12345
+variable        n_swap  equal 100
+
+# Interatomic potential
+pair_style      meam
+pair_coeff      * * library.meam Co Ni Cr Fe Mn CoNiCrFeMn.meam Co Ni Cr Fe Mn
+
+# Initial minimization and velocity assignment
+minimize        0 1.0e-8 1000 1000
+reset_timestep  0
+velocity        all create ${temp} ${seed} mom yes rot no
+
+# MD: anisotropic NPT relaxation for the polycrystal
+fix             npt_relax all npt temp ${temp} ${temp} 0.1 aniso ${press} ${press} 1.0
+
+# MC: pairwise atom swaps among all five species
+fix             sw12 all atom/swap 50 ${n_swap} 10001 ${temp} types 1 2
+fix             sw13 all atom/swap 50 ${n_swap} 10002 ${temp} types 1 3
+fix             sw14 all atom/swap 50 ${n_swap} 10003 ${temp} types 1 4
+fix             sw15 all atom/swap 50 ${n_swap} 10004 ${temp} types 1 5
+fix             sw23 all atom/swap 50 ${n_swap} 10005 ${temp} types 2 3
+fix             sw24 all atom/swap 50 ${n_swap} 10006 ${temp} types 2 4
+fix             sw25 all atom/swap 50 ${n_swap} 10007 ${temp} types 2 5
+fix             sw34 all atom/swap 50 ${n_swap} 10008 ${temp} types 3 4
+fix             sw35 all atom/swap 50 ${n_swap} 10009 ${temp} types 3 5
+fix             sw45 all atom/swap 50 ${n_swap} 10010 ${temp} types 4 5
+
+# Output
+thermo          100
+thermo_style    custom step temp pe press vol lx ly lz
+dump            traj all custom 500 hea_hybrid_relaxation.lammpstrj id type x y z
+
+# Run the hybrid MC/MD simulation
+timestep        0.001
+run             500000
+
+# Save the relaxed structure
+write_data      hea_hybrid_relaxed_300K.data
+
+# Example run command:
+# mpiexec -np 4 lmp -in in.lmp -pk omp 4 -sf omp
