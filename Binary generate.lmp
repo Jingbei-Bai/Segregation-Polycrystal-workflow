@@ -30,7 +30,7 @@ label           loop_start
 
 # Substitute the current site with V (type 2)
 set             atom ${atom_id} type 2
-
+minimize        0 1.0e-12 1000 1000
 # Recompute the energy without additional time integration
 run             0
 print           "${atom_id} ${totalenergy}" append binary_site_substitution_energies.txt
