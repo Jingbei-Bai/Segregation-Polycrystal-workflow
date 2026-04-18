@@ -10,7 +10,7 @@ read_data       70+5.lmp
 # Atomic mass and interatomic potential (elemental Al case shown here)
 mass            1 26.98
 pair_style      eam/alloy
-pair_coeff      * * AlCu.eam.alloy Al
+pair_coeff      * * AlCu.eam Al
 
 # Time integration settings
 timestep        0.001
